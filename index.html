@@ -547,12 +547,45 @@ function dgmEmpty(big){
 }
 
 /* ============================================================ parsing */
+/* Some sites (free-chords.com & co.) stack each chord above its syllable
+   with display:block spans inside an inline row; textContent flattens that
+   into "WondFmaj7erful". Walk the DOM and rebuild chord-over-lyric pairs. */
+const clsHasBlock=n=>((n.getAttribute('class')||'').trim().split(/\s+/).indexOf('block')>=0);
+function htmlToText(root){
+  const lines=[]; let top='',bot='',paired=0;
+  const bal=()=>{const n=Math.max(top.length,bot.length);
+    top+=' '.repeat(n-top.length); bot+=' '.repeat(n-bot.length);};
+  const flush=()=>{ if(top.trim())lines.push(top.replace(/\s+$/,''));
+    if(bot.trim())lines.push(bot.replace(/\s+$/,'')); top=bot=''; };
+  const chordPair=n=>{
+    const blocks=[...n.children].filter(clsHasBlock);
+    if(blocks.length<2)return null;
+    const name=blocks[0].textContent.trim();
+    return CHORD_RE.test(name)?[name,blocks[1].textContent]:null;
+  };
+  const walk=n=>{
+    for(const c of n.childNodes){
+      if(c.nodeType===3){bal(); bot+=c.nodeValue.replace(/\s+/g,' '); continue;}
+      if(c.nodeType!==1)continue;
+      if(c.tagName==='BR'){flush(); continue;}
+      const pair=chordPair(c);
+      if(pair){paired++; bal(); top+=pair[0]; bot+=pair[1]; bal(); continue;}
+      if(c.tagName==='DIV'||clsHasBlock(c)){flush(); walk(c); flush(); continue;}
+      walk(c);
+    }
+  };
+  walk(root); flush();
+  return {text:lines.join('\n'),paired};
+}
 function cleanInput(raw){
   let s=String(raw||'').replace(/\r\n?/g,'\n');
   if(/<[a-z!/][\s\S]*>/i.test(s)){
     try{
       const doc=new DOMParser().parseFromString(s,'text/html');
-      if(doc.body)s=doc.body.textContent;
+      if(doc.body){
+        const r=htmlToText(doc.body);
+        s=r.paired?r.text:doc.body.textContent;
+      }
     }catch(e){/* keep raw */}
   }
   return s
