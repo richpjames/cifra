@@ -1,0 +1,17 @@
+# Coolify deployment: the named volume is declared here so the SQLite
+# library survives redeploys without UI-configured persistent storage.
+services:
+  cifra:
+    build: .
+    image: cifra:latest
+    environment:
+      - CIFRA_TOKEN=${CIFRA_TOKEN:-}
+      - CIFRA_DB=/data/cifra.db
+      - PORT=8765
+    ports:
+      - "8765:8765"
+    volumes:
+      - cifra-data:/data
+    restart: unless-stopped
+volumes:
+  cifra-data:
