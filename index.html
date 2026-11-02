@@ -307,7 +307,8 @@
     <article id="chart"></article>
 
     <footer>
-      Paste any tab — plain text, or a raw copy straight from Ultimate Guitar (HTML junk is stripped automatically).
+      Paste any tab — plain text, a raw copy straight from Ultimate Guitar (HTML junk is stripped
+      automatically), or just a link to a tab page (fetched for you when the server runs).
       Everything runs and stays in your browser.
       <br>
       <kbd>Space</kbd> auto-scroll &nbsp;·&nbsp; <kbd>[</kbd><kbd>]</kbd> transpose &nbsp;·&nbsp;
@@ -326,7 +327,7 @@
     <button id="edClose" class="btn icon" title="Close"></button>
     <button id="edRender" class="btn primary">Render <kbd>⌘↵</kbd></button>
   </div>
-  <textarea id="edText" spellcheck="false" placeholder="Paste your tab here…"></textarea>
+  <textarea id="edText" spellcheck="false" placeholder="Paste a tab, or a link to one (ultimate-guitar.com…)…"></textarea>
 </div>
 
 <div id="library" hidden>
@@ -1218,7 +1219,86 @@ $('#editBtn').addEventListener('click',openEditor);
 $('#edClose').addEventListener('click',closeEditor);
 $('#edClear').addEventListener('click',()=>{edText.value='';edText.focus();});
 $('#edDemo').addEventListener('click',()=>{edText.value=DEMO;edText.focus();});
-function renderFromEditor(){
+/* ---------- import a tab by URL (needs the server for the cross-origin fetch) ---------- */
+const isHttpUrl=s=>/^https?:\/\/\S+$/i.test(s.trim());
+/* Ultimate Guitar keeps the tab text in a js-store JSON attribute, marked up
+   with [ch]…[/ch] chords inside [tab] blocks — strip the markup and the
+   chord-over-lyric layout is already there. */
+function tabFromUG(doc){
+  const store=doc.querySelector('.js-store');
+  if(!store||!store.dataset.content)return null;
+  let j;try{j=JSON.parse(store.dataset.content);}catch(e){return null;}
+  const p=j&&j.store&&j.store.page&&j.store.page.data;
+  if(!p)return null;
+  const wiki=p.tab_view&&p.tab_view.wiki_tab;
+  if(!wiki||!wiki.content||!wiki.content.trim())
+    throw new Error('no tab text on that page (official/pro tab?)');
+  const t=p.tab||{};
+  const title=t.localized_song_name||t.song_name, artist=t.localized_artist_name||t.artist_name;
+  const head=(title?'Song title: '+title+(artist?'\nArtist: '+artist:'')+'\n\n':'');
+  return head+wiki.content
+    .replace(/\r\n?/g,'\n')
+    .replace(/\[\/?(ch|tab|b)\]/gi,'');
+}
+/* Sites that render chord-over-lyric in the DOM often also ship a plain
+   print/copy layout: a chord-line element directly above a lyric-line
+   element. Find such pairs generically and read them in document order. */
+function tabFromPairedDivs(doc){
+  const leaf=n=>n.children.length===0;
+  const isPair=el=>{
+    const kids=[...el.children].filter(leaf);
+    if(kids.length!==2||el.children.length!==2)return false;
+    const a=kids[0].textContent.trim(),b=kids[1].textContent.trim();
+    return a&&b&&!!analyzeChordLine(a)&&!analyzeChordLine(b);
+  };
+  const pairs=[...doc.querySelectorAll('div,section,article')].filter(isPair);
+  if(pairs.length<3)return null;
+  const cont=pairs[0].parentElement;
+  const lines=[];
+  for(const el of cont.children){
+    if(pairs.includes(el)){
+      lines.push(el.children[0].textContent.replace(/\s+$/,''));
+      lines.push(el.children[1].textContent.trim());
+    }else if(leaf(el)&&el.textContent.trim())lines.push(el.textContent.trim());
+  }
+  return lines.length>=3?lines.join('\n'):null;
+}
+function tabFromHtml(html){
+  const doc=new DOMParser().parseFromString(html,'text/html');
+  const ug=tabFromUG(doc);
+  if(ug!=null)return ug;
+  /* plain-text tab pages keep the tab in a <pre> */
+  const pre=[...doc.querySelectorAll('pre')].filter(p=>p.textContent.trim().length>200)
+    .sort((a,b)=>b.textContent.length-a.textContent.length)[0];
+  if(pre)return pre.textContent;
+  const paired=tabFromPairedDivs(doc);
+  if(paired)return paired;
+  /* anything else: reuse the pasted-HTML cleanup (stacked chords → two rows) */
+  const walked=htmlToText(doc.body);
+  return walked.paired?walked.text:doc.body.textContent;
+}
+async function importTabFromUrl(url){
+  const host=new URL(url).hostname;
+  toast('Fetching '+host+' …');
+  const r=await fetch('api/import?url='+encodeURIComponent(url),{headers:authHdrs()});
+  if(r.status===401)throw new Error('wrong or missing access key');
+  if(r.status===404)throw new Error('URL import needs the server (node server.js)');
+  if(!r.ok)throw new Error('fetch failed ('+r.status+')');
+  const data=await r.json();
+  if(!data.html)throw new Error('empty page');
+  const text=tabFromHtml(data.html);
+  if(!text||!text.trim())throw new Error('no tab found on that page');
+  toast('Imported from '+host+' ✓');
+  return text;
+}
+async function renderFromEditor(){
+  const val=edText.value.trim();
+  if(isHttpUrl(val)){
+    let text;
+    try{text=await importTabFromUrl(val);}
+    catch(e){toast('Import failed — '+e.message);return;}
+    edText.value=text;
+  }
   setDoc(edText.value);
   closeEditor();
   toast('Rendered ✓');

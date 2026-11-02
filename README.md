@@ -19,7 +19,9 @@ node server.js
 ```
 
 This serves the site **and** a SQLite-backed song library (`cifra.db`), shared
-by every browser and machine that can reach the server. Needs Node 22+;
+by every browser and machine that can reach the server — plus a `/api/import`
+endpoint, so you can paste a **link** to a tab page (Ultimate Guitar, …) in
+the editor and have the server fetch and extract it for you. Needs Node 22+;
 zero dependencies.
 
 Any plain static server works too — the site is fully functional, but the
@@ -35,8 +37,8 @@ python3 -m http.server 8765
 
 - **With the synced library** — run `node server.js` on any always-on box
   (VPS, home server, Tailscale node). `PORT=9000` picks a port;
-  `CIFRA_TOKEN=s3cret` makes the library ask for that access key before
-  reading or writing; `CIFRA_DB=/path/to.db` relocates the database.
+  `CIFRA_TOKEN=s3cret` makes the library and URL import ask for that access
+  key before reading or writing; `CIFRA_DB=/path/to.db` relocates the database.
 - **Static only** — everything except cross-device library sync works:
   - **GitHub Pages** — push `index.html` to a repo, enable Pages on the branch.
   - **Netlify** — drag the folder onto <https://app.netlify.com/drop>.
@@ -46,6 +48,7 @@ python3 -m http.server 8765
 
 | Input | Output |
 | --- | --- |
+| A pasted link (`https://…`) | Server fetches the page; tab text is extracted (UG chord pages, plain-`<pre>` tabs, print layouts) and rendered — needs `server.js` |
 | `Song title:` / `Composition:` / `Tune:` lines | Title, artist, meta chips |
 | `[Verse 1]`, `[Chorus]`, … | Section headers |
 | Chord lines above lyrics (`G/B    G` …) | Chords anchored over the exact syllable |
