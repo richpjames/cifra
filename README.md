@@ -4,7 +4,8 @@ A single-file mini site. Paste any guitar tab — plain text, or a raw copy from
 Ultimate Guitar (spans, classes and all) — and it renders as a clean, playable
 chord chart: chords aligned over lyrics, chord diagrams, tablature blocks,
 transposition, auto-scroll, print, share links, and a song library.
-No build step, no dependencies. Runs as a plain static page, or behind the
+No build step; the only script dependency (`tonal`, for chord-symbol parsing)
+is vendored into `vendor/`. Runs as a plain static page, or behind the
 included `server.js` for a SQLite-backed library that follows you across
 machines.
 
@@ -63,9 +64,12 @@ duplicating; delete has a two-click confirm.
 
 ## Notes
 
-- Chord diagrams use a small music-theory engine: chord tones are resolved,
-  then the fretboard is searched for a playable voicing (right bass note for
-  slash chords, all chord tones present, minimal fretting). Common open
-  shapes come from a built-in dictionary.
+- Chord symbols are parsed with [tonal](https://tonaljs.github.io/) — its
+  browser build is vendored in `vendor/tonal.min.js` (loaded as a plain
+  script, so static hosting and `file://` still work). Refresh it after a
+  `npm install` bump with `npm run vendor`.
+- Voicings are computed locally: chord tones from tonal feed a fretboard
+  search constrained to shapes a four-finger hand can play (barres count as
+  one finger). Common open shapes come from a built-in dictionary.
 - Google Fonts (Fraunces / Inter / JetBrains Mono) load from a CDN with
   system fallbacks — the site works fully offline without them.
