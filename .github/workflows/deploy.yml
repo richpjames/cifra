@@ -1,0 +1,34 @@
+# A merged PR lands on main as a push; this pings Coolify's deploy webhook,
+# and Coolify pulls the repo and rebuilds the Dockerfile itself.
+# Secrets (repo → Settings → Secrets and variables → Actions):
+#   COOLIFY_WEBHOOK_URL — your app's deploy URL, e.g.
+#     https://<coolify-host>/api/v1/deploy?uuid=<app-uuid>
+#   COOLIFY_TOKEN       — optional team API token; sent as Bearer if set
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # manual "redeploy" button
+
+permissions: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Coolify deploy webhook
+        env:
+          WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+          API_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "::error::Missing COOLIFY_WEBHOOK_URL secret — Coolify → your app → Webhooks." >&2
+            exit 1
+          fi
+          if [ -n "$API_TOKEN" ]; then
+            curl --fail --silent --show-error --max-time 30 \
+              --header "Authorization: Bearer $API_TOKEN" "$WEBHOOK_URL"
+          else
+            curl --fail --silent --show-error --max-time 30 "$WEBHOOK_URL"
+          fi
