@@ -1,0 +1,11 @@
+{
+  "name": "cifra",
+  "private": true,
+  "description": "Dev-time deps only — the served site is the vendored bundle + static files.",
+  "scripts": {
+    "vendor": "node scripts/vendor.mjs"
+  },
+  "dependencies": {
+    "tonal": "^6.5.1"
+  }
+}
