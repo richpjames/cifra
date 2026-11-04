@@ -424,6 +424,24 @@ function tp(name,delta){
 
 /* ---------- voicing search ---------- */
 const TUNING=[40,45,50,55,59,64]; /* E2 A2 D3 G3 B3 E4, low → high */
+/* fingers a human hand needs for a grip: same-fret strings share one barre
+   finger only when every string the barre spans sits at that fret or higher */
+function fingersNeeded(frets){
+  const byFret=new Map();
+  frets.forEach((f,s)=>{ if(f<1)return;
+    if(!byFret.has(f))byFret.set(f,[]); byFret.get(f).push(s); });
+  let n=0;
+  for(const [f,ss] of byFret){
+    const lo=Math.min.apply(null,ss),hi=Math.max.apply(null,ss);
+    let barre=true;
+    for(let s=lo;s<=hi;s++){
+      const g=frets[s];
+      if(s!==lo&&s!==hi&&g>=0&&g<f){barre=false;break;} /* lower fret or open blocks the barre */
+    }
+    n+=barre?1:ss.length;
+  }
+  return n;
+}
 function findVoicing(root,ivs,bass){
   const pcs=[...new Set(ivs.map(x=>(root+x)%12))];
   const needBass=(bass==null)?root:bass;
@@ -441,10 +459,11 @@ function findVoicing(root,ivs,bass){
       const opts=[];
       for(let s=0;s<6;s++){
         const list=[-1];
-        if(allowed.has(TUNING[s]%12))list.push(0);
+        /* open strings only pair with first-position frets, never with a distant window */
+        if(base===0&&allowed.has(TUNING[s]%12))list.push(0);
         for(let f=Math.max(base,1);f<=base+3&&f<=15;f++)
           if(allowed.has((TUNING[s]+f)%12))list.push(f);
-        if(list.length===1)list.length=0; /* only mute possible */
+        /* a string with no chord tone in this window simply stays muted */
         opts.push(list);
       }
       const frets=new Array(6);
@@ -459,8 +478,10 @@ function findVoicing(root,ivs,bass){
           if(n<p.min)return;
           if(low%12!==needBass)return;
           for(const r of p.req)if(!hit.has(r))return;
+          const nf=fingersNeeded(frets);
+          if(nf>4)return; /* four fingers per hand — a barre counts as one */
           const all=pcs.every(x=>hit.has(x))?8:0;
-          const score=n*10+all-sum-base*2;
+          const score=n*10+all-sum-base*2-nf*2;
           if(!best||score>best.score)best={score,frets:frets.slice()};
           return;
         }
