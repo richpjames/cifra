@@ -550,13 +550,38 @@ function dgmSVG(frets,big){
   if(win===0)s+='<rect x="'+(X(0)-1)+'" y="'+(TOP-3.4)+'" width="'+(X(5)-X(0)+2)+'" height="3.4" rx="1.6" fill="var(--dg-mut)"/>';
   else s+='<text x="'+(X(0)-3)+'" y="'+(TOP+RH/2+3)+'" font-size="8.5" font-family="Inter,sans-serif" font-weight="600" fill="var(--muted)" text-anchor="middle">'+win+'</text>';
   /* markers + dots */
+  /* a same-fret group spanning higher-fretted strings is a barre: one line, not dots */
+  const byFret=new Map();
+  frets.forEach((f,si)=>{ if(f<1)return;
+    if(!byFret.has(f))byFret.set(f,[]); byFret.get(f).push(si); });
+  const barreOf=new Map(); /* string → its barre group */
+  for(const [f,ss] of byFret){
+    if(ss.length<2)continue;
+    const lo=Math.min.apply(null,ss),hi=Math.max.apply(null,ss);
+    let blocked=false,above=0;
+    for(let si=lo+1;si<hi;si++){
+      const g=frets[si];
+      if(g===f||g<0)continue;             /* same-fret member or muted string */
+      if(g===0||g<f){blocked=true;break;} /* open or lower fret: no barre possible */
+      above++;                            /* another finger fretting above the barre */
+    }
+    /* substantial barres only: 3+ strings under it, or 2+ notes fretted on top of it.
+       A mere 2-string pair with one note above (e.g. D's G-e at fret 2) reads as dots. */
+    if(!blocked&&above>0&&(ss.length>=3||above>=2))for(const k of ss)barreOf.set(k,{f,lo,hi});
+  }
+  const drawn=new Set();
+  for(const b of barreOf.values()){
+    const key=b.f+':'+b.lo+'-'+b.hi; if(drawn.has(key))continue; drawn.add(key);
+    const row=win===0?b.f:(b.f-win+1), y=TOP+(row-0.5)*RH;
+    s+='<line x1="'+X(b.lo)+'" y1="'+y+'" x2="'+X(b.hi)+'" y2="'+y+'" stroke="var(--chord)" stroke-width="6.4" stroke-linecap="round"/>';
+  }
   for(let i=0;i<6;i++){
     const f=frets[i], x=X(i);
     if(f<0){
       s+='<path d="M'+(x-2.6)+' '+(TOP-10.5)+'l5.2 5.2M'+(x+2.6)+' '+(TOP-10.5)+'l-5.2 5.2" stroke="var(--dg-mut)" stroke-width="1.3" stroke-linecap="round"/>';
     }else if(f===0){
       s+='<circle cx="'+x+'" cy="'+(TOP-8)+'" r="2.8" fill="none" stroke="var(--dg-mut)" stroke-width="1.3"/>';
-    }else{
+    }else if(!barreOf.has(i)){
       const row=win===0?f:(f-win+1);
       s+='<circle cx="'+x+'" cy="'+(TOP+(row-0.5)*RH)+'" r="4" fill="var(--chord)"/>';
     }
