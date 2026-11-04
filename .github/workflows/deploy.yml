@@ -26,6 +26,14 @@ jobs:
             echo "::error::Missing COOLIFY_WEBHOOK_URL secret — Coolify → your app → Webhooks." >&2
             exit 1
           fi
+          # Angle brackets / quotes / whitespace: the placeholder wasn't
+          # substituted (curl would only fail with a cryptic DNS error).
+          case "$WEBHOOK_URL" in
+            *"<"*|*">"*|*[[:space:]]*|*"'"*|*'"'*)
+              echo "::error::COOLIFY_WEBHOOK_URL contains placeholder characters — paste the real URL, e.g. https://coolify.example.com/api/v1/deploy?uuid=1234-abcd" >&2
+              exit 1
+              ;;
+          esac
           if [ -n "$API_TOKEN" ]; then
             curl --fail --silent --show-error --max-time 30 \
               --header "Authorization: Bearer $API_TOKEN" "$WEBHOOK_URL"
