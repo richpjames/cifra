@@ -345,6 +345,7 @@
 
 <noscript><p style="padding:24px">This page needs JavaScript to render charts.</p></noscript>
 
+<script src="vendor/tonal.min.js"></script>
 <script>
 (function(){
 'use strict';
@@ -372,44 +373,30 @@ const ICONS = {
 };
 
 /* ============================================================ music */
-const NOTE={C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11};
+/* chord theory comes from tonal (vendored: vendor/tonal.min.js → global Tonal) */
+const T=Tonal;
 const SHARP=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const FLAT =['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 
 const CHORD_RE=/^[A-G][#b]?(?:(?:maj|min|m|sus|aug|dim|add|alt|M|Δ|°|ø|\+|#|b|-|\d)*)?(?:\/[A-G][#b]?)?$/;
 
-const QUALS={
-  '':[0,4,7],'maj7':[0,4,7,11],'maj9':[0,4,7,11,2],'maj13':[0,4,7,11,9],
-  'm':[0,3,7],'m7':[0,3,7,10],'m9':[0,3,7,10,2],'m11':[0,3,7,10,5],'m6':[0,3,7,9],'mmaj7':[0,3,7,11],
-  '7':[0,4,7,10],'9':[0,4,7,10,2],'11':[0,5,7,10,2],'13':[0,4,7,10,9],
-  '6':[0,4,7,9],'69':[0,2,4,7,9],
-  'add9':[0,2,4,7],'add11':[0,4,5,7],'add4':[0,4,5,7],
-  '5':[0,7],'sus':[0,5,7],'sus4':[0,5,7],'sus2':[0,2,7],
-  '7sus4':[0,5,7,10],'9sus4':[0,5,7,10,2],
-  'dim':[0,3,6],'dim7':[0,3,6,9],'aug':[0,4,8],
-  '7#5':[0,4,8,10],'7b5':[0,4,6,10],'7b9':[0,4,7,10,1],'7#9':[0,4,7,10,3],
-  'm7b5':[0,3,6,10]
-};
-function normQual(q){
-  q=(q||'').trim().replace(/[()\s]/g,'');
-  if(q==='')return '';
-  const map={'major':'','minor':'m','min':'m','M7':'maj7','M9':'maj9','M13':'maj13','M':'maj7',
-    'Δ':'maj7','Δ7':'maj7','°':'dim','º':'dim','ø':'m7b5','+':'aug','aug':'aug',
-    'dom7':'7','min7':'m7','minor7':'m7','min9':'m9','minor9':'m9','min6':'m6','minor6':'m6',
-    'min11':'m11','minmaj7':'mmaj7'};
-  if(map[q]!==undefined)return map[q];
-  if(QUALS[q]!==undefined)return q;
-  return null;
-}
-/* parse "G/B", "F#m7" … → {root,q,ivs,bass,ok} */
+/* legacy spellings tonal's dictionary may not know; tried only when the raw parse fails */
+const SYM_ALT=[
+  [/Δ7?/g,'maj7'],[/º/g,'dim'],[/ø7?/g,'m7b5'],[/mmaj7/g,'mMaj7'],[/m6\/9/g,'m69'],
+  [/M(?!aj|[a-z])/g,'maj'],[/dom7/g,'7'],
+  [/major7/g,'maj7'],[/minor7/g,'m7'],[/major/g,''],[/minor/g,'m'],[/min(?![a-z])/g,'m'],
+];
+/* parse "G/B", "F#m7" … via tonal → {root,q,ivs,bass,ok}; q is the interval set */
 function parseChord(name){
-  const m=name.match(/^([A-G][#b]?)([^\/]*)(?:\/([A-G][#b]?))?$/);
-  if(!m)return null;
-  const root=NOTE[m[1]]; if(root===undefined)return null;
-  const q=normQual(m[2]);
-  const bass=m[3]?NOTE[m[3]]:null;
-  if(q===null)return {root,q:null,ivs:null,bass,ok:false};
-  return {root,q,ivs:QUALS[q],bass,ok:true};
+  let c=T.Chord.get(name);
+  if(c.empty){
+    let alt=name; for(const [re,sub] of SYM_ALT)alt=alt.replace(re,sub);
+    if(alt!==name)c=T.Chord.get(alt);
+  }
+  if(c.empty||!c.tonic)return null;
+  const root=T.Note.chroma(c.tonic);
+  const ivs=[...new Set(c.notes.map(n=>(T.Note.chroma(n)-root+12)%12))].sort((a,b)=>a-b);
+  return {root,q:ivs.join(','),ivs,bass:c.bass?T.Note.chroma(c.bass):null,ok:true};
 }
 /* transpose a chord name by delta semitones */
 function tp(name,delta){
@@ -419,11 +406,29 @@ function tp(name,delta){
   const flat=/b/.test(m[1])||/b/.test(m[3]||'');
   const names=flat?FLAT:SHARP;
   const shift=pc=>names[((pc+delta)%12+12)%12];
-  return shift(NOTE[m[1]])+m[2]+(m[3]?'/'+shift(NOTE[m[3]]):'');
+  return shift(T.Note.chroma(m[1]))+m[2]+(m[3]?'/'+shift(T.Note.chroma(m[3])):'');
 }
 
 /* ---------- voicing search ---------- */
 const TUNING=[40,45,50,55,59,64]; /* E2 A2 D3 G3 B3 E4, low → high */
+/* fingers a human hand needs for a grip: same-fret strings share one barre
+   finger only when every string the barre spans sits at that fret or higher */
+function fingersNeeded(frets){
+  const byFret=new Map();
+  frets.forEach((f,s)=>{ if(f<1)return;
+    if(!byFret.has(f))byFret.set(f,[]); byFret.get(f).push(s); });
+  let n=0;
+  for(const [f,ss] of byFret){
+    const lo=Math.min.apply(null,ss),hi=Math.max.apply(null,ss);
+    let barre=true;
+    for(let s=lo;s<=hi;s++){
+      const g=frets[s];
+      if(s!==lo&&s!==hi&&g>=0&&g<f){barre=false;break;} /* lower fret or open blocks the barre */
+    }
+    n+=barre?1:ss.length;
+  }
+  return n;
+}
 function findVoicing(root,ivs,bass){
   const pcs=[...new Set(ivs.map(x=>(root+x)%12))];
   const needBass=(bass==null)?root:bass;
@@ -441,10 +446,11 @@ function findVoicing(root,ivs,bass){
       const opts=[];
       for(let s=0;s<6;s++){
         const list=[-1];
-        if(allowed.has(TUNING[s]%12))list.push(0);
+        /* open strings only pair with first-position frets, never with a distant window */
+        if(base===0&&allowed.has(TUNING[s]%12))list.push(0);
         for(let f=Math.max(base,1);f<=base+3&&f<=15;f++)
           if(allowed.has((TUNING[s]+f)%12))list.push(f);
-        if(list.length===1)list.length=0; /* only mute possible */
+        /* a string with no chord tone in this window simply stays muted */
         opts.push(list);
       }
       const frets=new Array(6);
@@ -459,8 +465,10 @@ function findVoicing(root,ivs,bass){
           if(n<p.min)return;
           if(low%12!==needBass)return;
           for(const r of p.req)if(!hit.has(r))return;
+          const nf=fingersNeeded(frets);
+          if(nf>4)return; /* four fingers per hand — a barre counts as one */
           const all=pcs.every(x=>hit.has(x))?8:0;
-          const score=n*10+all-sum-base*2;
+          const score=n*10+all-sum-base*2-nf*2;
           if(!best||score>best.score)best={score,frets:frets.slice()};
           return;
         }
@@ -529,13 +537,38 @@ function dgmSVG(frets,big){
   if(win===0)s+='<rect x="'+(X(0)-1)+'" y="'+(TOP-3.4)+'" width="'+(X(5)-X(0)+2)+'" height="3.4" rx="1.6" fill="var(--dg-mut)"/>';
   else s+='<text x="'+(X(0)-3)+'" y="'+(TOP+RH/2+3)+'" font-size="8.5" font-family="Inter,sans-serif" font-weight="600" fill="var(--muted)" text-anchor="middle">'+win+'</text>';
   /* markers + dots */
+  /* a same-fret group spanning higher-fretted strings is a barre: one line, not dots */
+  const byFret=new Map();
+  frets.forEach((f,si)=>{ if(f<1)return;
+    if(!byFret.has(f))byFret.set(f,[]); byFret.get(f).push(si); });
+  const barreOf=new Map(); /* string → its barre group */
+  for(const [f,ss] of byFret){
+    if(ss.length<2)continue;
+    const lo=Math.min.apply(null,ss),hi=Math.max.apply(null,ss);
+    let blocked=false,above=0;
+    for(let si=lo+1;si<hi;si++){
+      const g=frets[si];
+      if(g===f||g<0)continue;             /* same-fret member or muted string */
+      if(g===0||g<f){blocked=true;break;} /* open or lower fret: no barre possible */
+      above++;                            /* another finger fretting above the barre */
+    }
+    /* substantial barres only: 3+ strings under it, or 2+ notes fretted on top of it.
+       A mere 2-string pair with one note above (e.g. D's G-e at fret 2) reads as dots. */
+    if(!blocked&&above>0&&(ss.length>=3||above>=2))for(const k of ss)barreOf.set(k,{f,lo,hi});
+  }
+  const drawn=new Set();
+  for(const b of barreOf.values()){
+    const key=b.f+':'+b.lo+'-'+b.hi; if(drawn.has(key))continue; drawn.add(key);
+    const row=win===0?b.f:(b.f-win+1), y=TOP+(row-0.5)*RH;
+    s+='<line x1="'+X(b.lo)+'" y1="'+y+'" x2="'+X(b.hi)+'" y2="'+y+'" stroke="var(--chord)" stroke-width="6.4" stroke-linecap="round"/>';
+  }
   for(let i=0;i<6;i++){
     const f=frets[i], x=X(i);
     if(f<0){
       s+='<path d="M'+(x-2.6)+' '+(TOP-10.5)+'l5.2 5.2M'+(x+2.6)+' '+(TOP-10.5)+'l-5.2 5.2" stroke="var(--dg-mut)" stroke-width="1.3" stroke-linecap="round"/>';
     }else if(f===0){
       s+='<circle cx="'+x+'" cy="'+(TOP-8)+'" r="2.8" fill="none" stroke="var(--dg-mut)" stroke-width="1.3"/>';
-    }else{
+    }else if(!barreOf.has(i)){
       const row=win===0?f:(f-win+1);
       s+='<circle cx="'+x+'" cy="'+(TOP+(row-0.5)*RH)+'" r="4" fill="var(--chord)"/>';
     }

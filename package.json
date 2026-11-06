@@ -1,0 +1,12 @@
+{
+  "name": "cifra",
+  "private": true,
+  "description": "Dev-time deps only — the served site is the vendored bundle + static files.",
+  "scripts": {
+    "vendor": "node scripts/vendor.mjs",
+    "test": "node scripts/test.mjs && node --check server.js"
+  },
+  "dependencies": {
+    "tonal": "^6.5.1"
+  }
+}
