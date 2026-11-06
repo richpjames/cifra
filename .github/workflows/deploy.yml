@@ -3,7 +3,12 @@
 # Secrets (repo → Settings → Secrets and variables → Actions):
 #   COOLIFY_WEBHOOK_URL — your app's deploy URL, e.g.
 #     https://<coolify-host>/api/v1/deploy?uuid=<app-uuid>
-#   COOLIFY_TOKEN       — optional team API token; sent as Bearer if set
+#   COOLIFY_TOKEN       — optional team API token; sent as Bearer if set.
+#                         With it (and an /api/v1/deploy URL) the run also
+#                         waits for the deployment and goes red if Coolify's
+#                         build or healthcheck fails.
+#   SITE_URL            — optional public URL, e.g. https://cifra.ricojam.es;
+#                         when set, the run smoke-tests it after the deploy.
 name: Deploy
 
 on:
@@ -16,6 +21,7 @@ permissions: {}
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Trigger Coolify deploy webhook
         env:
@@ -35,9 +41,91 @@ jobs:
               ;;
           esac
           # /api/v1/deploy is POST-only; a GET there returns 405.
+          args=(--request POST)
           if [ -n "$API_TOKEN" ]; then
-            curl --fail --silent --show-error --max-time 30 --request POST \
-              --header "Authorization: Bearer $API_TOKEN" "$WEBHOOK_URL"
-          else
-            curl --fail --silent --show-error --max-time 30 --request POST "$WEBHOOK_URL"
+            args+=(--header "Authorization: Bearer $API_TOKEN")
           fi
+          # The response carries the deployment uuids Coolify queued; the
+          # next step reads them to watch the deployment actually finish.
+          curl --fail --silent --show-error --max-time 30 \
+            "${args[@]}" "$WEBHOOK_URL" > "$RUNNER_TEMP/deploy-response.json"
+
+      - name: Wait for the Coolify deployment to finish
+        env:
+          WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+          API_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          # Only the API form of the webhook returns deployment uuids, and
+          # reading deployment status needs the token; otherwise skip.
+          case "$WEBHOOK_URL" in
+            */api/v1/deploy*) ;;
+            *)
+              echo "::notice::WEBHOOK_URL is not an /api/v1/deploy URL — not tracking deployment status."
+              exit 0
+              ;;
+          esac
+          if [ -z "$API_TOKEN" ]; then
+            echo "::notice::No COOLIFY_TOKEN secret — not tracking deployment status."
+            exit 0
+          fi
+          uuids=$(jq -r '.deployments[]?.deployment_uuid // empty' \
+            "$RUNNER_TEMP/deploy-response.json" 2>/dev/null) || uuids=""
+          if [ -z "$uuids" ]; then
+            echo "::notice::Coolify returned no deployment uuid — not tracking deployment status."
+            exit 0
+          fi
+          api_base=${WEBHOOK_URL%%/api/v1/deploy*}
+          for uuid in $uuids; do
+            echo "Watching deployment $uuid …"
+            tries=0
+            while :; do
+              body=$(curl --silent --max-time 15 \
+                --header "Authorization: Bearer $API_TOKEN" \
+                "$api_base/api/v1/deployments/$uuid") || body=""
+              status=$(jq -r '.status // (if .message then "error: \(.message)" else empty end)' \
+                <<<"$body" 2>/dev/null) || status=""
+              case "$status" in
+                done)
+                  echo "Deployment $uuid: done"
+                  break
+                  ;;
+                failed|cancelled)
+                  echo "::error::Deployment $uuid ended as $status — Coolify → Deployments has the logs." >&2
+                  exit 1
+                  ;;
+                error:*)
+                  echo "::error::Coolify API rejected the status check ($status) — check COOLIFY_TOKEN." >&2
+                  exit 1
+                  ;;
+                *)
+                  tries=$((tries + 1))
+                  if [ "$tries" -ge 60 ]; then
+                    echo "::error::Gave up waiting for deployment $uuid (last status: ${status:-no answer})." >&2
+                    exit 1
+                  fi
+                  sleep 10
+                  ;;
+              esac
+            done
+          done
+
+      - name: Smoke-test the site
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          if [ -z "$SITE_URL" ]; then
+            echo "::notice::SITE_URL secret not set — skipping the post-deploy smoke test."
+            exit 0
+          fi
+          for i in $(seq 1 24); do
+            code=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              --max-time 10 "$SITE_URL") || code=000
+            if [ "$code" = "200" ]; then
+              echo "$SITE_URL is up (HTTP 200)."
+              exit 0
+            fi
+            echo "attempt $i/24: HTTP $code"
+            sleep 15
+          done
+          echo "::error::$SITE_URL never answered 200 — if Coolify shows the deployment green, the problem is between Traefik and the container." >&2
+          exit 1
