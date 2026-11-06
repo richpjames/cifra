@@ -75,9 +75,46 @@ function songFromBody(o){
 const FIELDS='id,title,artist,raw,saved';
 const byId=id=>db.prepare(`SELECT ${FIELDS} FROM songs WHERE id=?`).get(id);
 
+/* Page fetch for "paste a URL" tab import. Browsers can't scrape cross-origin,
+   so the server fetches the page and hands the HTML (minus scripts/styles) to
+   the client, which knows how to parse it. */
+const FETCH_UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
+const IMPORT_CAP=5*1024*1024;
+async function handleImport(req,res){
+  let target;
+  try{
+    target=new URL(req.url||'','http://x').searchParams.get('url')||'';
+    const u=new URL(target);
+    if(u.protocol!=='http:'&&u.protocol!=='https:')throw new Error('bad protocol');
+  }catch(e){return sendJSON(res,400,{error:'url must be http(s)'});}
+  try{
+    const r=await fetch(target,{
+      headers:{'User-Agent':FETCH_UA,'Accept':'text/html'},
+      redirect:'follow',signal:AbortSignal.timeout(10000)
+    });
+    /* read up to IMPORT_CAP, then drop the rest */
+    let html='';
+    if(r.body){
+      const reader=r.body.getReader(); let size=0, chunks=[];
+      while(size<IMPORT_CAP){
+        const {done,value}=await reader.read();
+        if(done)break;
+        size+=value.length; chunks.push(value);
+      }
+      if(size>=IMPORT_CAP)reader.cancel().catch(()=>{});
+      html=Buffer.concat(chunks.slice(0, chunks.length)).toString('utf8').slice(0,IMPORT_CAP);
+    }else html=await r.text();
+    html=html.replace(/<script\b[\s\S]*?<\/script>/gi,'').replace(/<style\b[\s\S]*?<\/style>/gi,'');
+    sendJSON(res,200,{url:r.url,status:r.status,html});
+  }catch(e){sendJSON(res,502,{error:'fetch failed: '+String(e.message||e)});}
+}
+
 async function handleApi(req,res,pathname){
   if(TOKEN&&req.headers.authorization!=='Bearer '+TOKEN)
     return sendJSON(res,401,{error:'unauthorized'});
+
+  if(req.method==='GET'&&pathname==='/api/import')
+    return handleImport(req,res).catch(e=>sendJSON(res,500,{error:String(e.message||e)}));
 
   const idm=pathname.match(/^\/api\/songs\/(\d+)$/);
   if(req.method==='GET'&&pathname==='/api/songs')
