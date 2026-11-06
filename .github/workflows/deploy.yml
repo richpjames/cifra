@@ -26,9 +26,10 @@ jobs:
             echo "::error::Missing COOLIFY_WEBHOOK_URL secret — Coolify → your app → Webhooks." >&2
             exit 1
           fi
+          # /api/v1/deploy is POST-only; a GET there returns 405.
           if [ -n "$API_TOKEN" ]; then
-            curl --fail --silent --show-error --max-time 30 \
+            curl --fail --silent --show-error --max-time 30 --request POST \
               --header "Authorization: Bearer $API_TOKEN" "$WEBHOOK_URL"
           else
-            curl --fail --silent --show-error --max-time 30 "$WEBHOOK_URL"
+            curl --fail --silent --show-error --max-time 30 --request POST "$WEBHOOK_URL"
           fi
