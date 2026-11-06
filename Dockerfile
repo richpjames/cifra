@@ -2,7 +2,10 @@
 # Node 24: node:sqlite is stable there (server.js also runs on 22+).
 FROM node:24-alpine
 WORKDIR /app
-COPY index.html server.js vendor ./vendor/
+# Two lines: with multiple sources Docker flattens directory contents into
+# the destination, so `COPY … vendor ./` would drop tonal.min.js into /app.
+COPY index.html server.js ./
+COPY vendor ./vendor/
 # /data holds cifra.db — mount a Coolify persistent volume here
 RUN mkdir -p /data && chown node:node /data
 USER node
