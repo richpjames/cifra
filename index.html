@@ -1487,8 +1487,21 @@ $('#copyBtn').addEventListener('click',()=>copyText(plainText(),'Copied as text 
 $('#printBtn').addEventListener('click',()=>window.print());
 function encodeB64(s){return btoa(unescape(encodeURIComponent(s)));}
 function decodeB64(s){return decodeURIComponent(escape(atob(s)));}
+/* The link is base64url so + and / can't be mangled on their way through
+   chat apps or linkifiers; tabFromHash also accepts plain-base64 links. */
+const b64url=s=>s.replace(/\+/g,'-').replace(/\//g,'_');
+const unb64url=s=>s.replace(/-/g,'+').replace(/_/g,'/');
+function tabFromHash(hash){
+  const m=/^#t=([^&]*)/.exec(hash||'');
+  if(!m)return null;
+  /* never URLSearchParams: its form decoding turns + into a space, which
+     atob then silently drops — corrupting the payload (issue: shared links
+     showed "Untitled chart") */
+  try{return decodeB64(unb64url(decodeURIComponent(m[1])));}catch(e){return null;}
+}
+function shareHash(raw){return '#t='+b64url(encodeB64(raw));}
 $('#shareBtn').addEventListener('click',()=>{
-  history.replaceState(null,'','#t='+encodeB64(state.raw));
+  history.replaceState(null,'',shareHash(state.raw));
   copyText(location.href,'Share link copied ✓');
 });
 
@@ -1536,9 +1549,7 @@ function setDoc(raw){
   setSpeed(parseFloat(localStorage.getItem(LS.speed))||1);
 
   /* doc: #t= link > saved > demo */
-  let raw=null;
-  const h=new URLSearchParams(location.hash.slice(1)).get('t');
-  if(h){try{raw=decodeB64(h);}catch(e){raw=null;}}
+  let raw=tabFromHash(location.hash);
   if(!raw)raw=localStorage.getItem(LS.doc);
   setDoc(raw||DEMO);
   /* font swap changes text metrics — re-render so dense-pair detection runs
