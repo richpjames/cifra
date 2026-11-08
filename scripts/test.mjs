@@ -48,4 +48,32 @@ const TP = [['G',1,'G#'],['B',1,'C'],['Bb',-1,'A'],['F#',1,'G'],['C',-1,'B'],['E
 for (const [n, d, want] of TP) { const got = tp(n, d); if (got !== want) fail(`tp(${n},${d}) = ${got}, want ${want}`); }
 console.log(`transpose: ${TP.length} spot checks`);
 
+/* 5. #t= share links survive the URL (regression: reading them with
+      URLSearchParams turned base64 + into a space, which atob silently
+      dropped — corrupting the payload and losing the song) */
+{
+  const share = html.slice(html.indexOf('function encodeB64'), html.indexOf("$('#shareBtn')"));
+  const sctx = { console, btoa, atob };
+  vm.createContext(sctx);
+  vm.runInContext(share + '\n;globalThis.__s={encodeB64,decodeB64,tabFromHash,shareHash};', sctx);
+  const { encodeB64, tabFromHash, shareHash } = sctx.__s;
+  /* a payload whose base64 actually uses both + and / (the manglers). Plain
+     lyrics never produce either; 🎼 yields + and ➿ yields /, but only when
+     their bytes land on a 6-bit group boundary — so sweep the alignment */
+  let demo = null;
+  for (let i = 0; i < 9 && !demo; i++) {
+    const s = 'Song title: S Wonderful\n' + ' '.repeat(i % 3) + '🎼 ' + ' '.repeat((i / 3 | 0) % 3) + 'F#dim ➿ glamorous ' + i;
+    const b = encodeB64(s);
+    if (b.includes('+') && b.includes('/')) demo = s;
+  }
+  if (!demo) fail('no test payload produced + and / in its base64');
+  else {
+    if (tabFromHash(shareHash(demo)) !== demo) fail('base64url #t= link does not round-trip');
+    if (tabFromHash('#t=' + encodeB64(demo)) !== demo) fail('legacy #t= link (literal + and /) does not decode');
+  }
+  if (tabFromHash('#t=%zz') !== null) fail('garbage hash should yield null, not throw');
+  if (tabFromHash('') !== null || tabFromHash('#x=1') !== null) fail('hash without #t= should yield null');
+  console.log('share links: base64url + legacy round-trip checked');
+}
+
 process.exit(failures ? (console.error(`${failures} FAILUR${failures === 1 ? 'E' : 'ES'}`), 1) : console.log('ALL CHECKS PASS'), 0);
